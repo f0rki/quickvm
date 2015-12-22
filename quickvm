@@ -1,0 +1,309 @@
+#!/usr/bin/env bash
+#
+# quickvm:
+# Quickly clone/start/stop/run commands on/delete a VM with libvirt
+#
+# Copyright (c) 2015 Michael Rodler <contact@f0rki.at>
+#
+# Licensed under the MIT license, see LICENSE for more information.
+#
+#
+set -eu -o pipefail
+#set -evx
+
+# regarding coding style - this script tries to follow the following
+# guidelines:
+# https://github.com/azet/community_bash_style_guide
+# also shellchecked
+
+QUICKVM_USAGE="$0 <command> [command options]"
+
+# setup sane default here, will be overwritten with read_config
+QUICKVM_CONFIG_FILE="$HOME/.config/quickvm/config.sh"
+QUICKVM_LIBVIRT_URL="qemu:///system"
+QUICKVM_SIZE="20G"
+QUICKVM_STORAGE_POOL="default"
+QUICKVM_VCPUS="1"
+QUICKVM_MEMORY="1024"
+QUICKVM_USER="$USER"
+declare -i QUICKVM_WAITSTART
+QUICKVM_WAITSTART=5
+
+
+# help message for the commands
+declare -A QUICKVM_COMMANDS
+QUICKVM_COMMANDS[clone]="<newvm> <basevm>\n create newvm based on first basevm disk"
+QUICKVM_COMMANDS[list]=" \n list all virtual machines"
+QUICKVM_COMMANDS[shell]="<vm> [command]\n ssh into and optionally execute the given commands"
+QUICKVM_COMMANDS[start]="<vm>\n start a vm"
+QUICKVM_COMMANDS[stop-all]="<vm>\n stop all VMs created by quickvm"
+QUICKVM_COMMANDS[stop]="<vm>\n delete a vm"
+QUICKVM_COMMANDS[trash]="<vm>\n delete a vm and associated storage images created by quickvm"
+QUICKVM_COMMANDS[virsh]="<virsh commands>\n just execute virsh with the given command"
+
+
+function quickvm_help_for() {
+    #set -evx
+    declare -a lines
+    IFS=$'\n' lines=($(echo ${QUICKVM_COMMANDS[$1]} | sed 's/\\n/\n/g'))
+    printf "%s %s\n" "$1" "${lines[0]}"
+    lines=("${lines[@]:1}")
+    for line in "${lines[@]}"; do
+        printf "    %s\n" "$line"
+    done
+}
+
+
+function __quickvm_sudo() {
+    if [[ -x $(which sudo) ]]; then
+        sudo $@
+    else
+        su -c "$@"
+    fi
+}
+
+function __quickvm_virsh() {
+    virsh -q -c "$QUICKVM_LIBVIRT_URL" $@
+}
+
+function __was_created_by_quickvm() {
+    __quickvm_virsh desc "$1" | grep -i 'quickvm'
+}
+
+function quickvm_log_error() {
+    printf "quickvm-error: " >&2
+    printf "$@" >&2
+    echo "" >&2
+}
+
+function quickvm_read_config() {
+    # get default vcpu count based on the number of available CPU cores on the
+    # host node
+    local vcpus
+    vcpus=($(virsh -c qemu:///system -q nodeinfo | grep 'CPU(s)'))
+    vcpus="${vcpus[1]}"
+    QUICKVM_VCPUS="$vcpus"
+
+    if [[ -f "$QUICKVM_CONFIG_FILE" ]]; then
+        source "$QUICKVM_CONFIG_FILE"
+    fi
+}
+
+function quickvm_is_running() {
+    __quickvm_virsh dominfo "$1" | grep -i state | grep -i running >/dev/null
+}
+
+function quickvm_ensure_running() {
+    if quickvm_is_running "$1"; then
+        return 0
+    else
+        __quickvm_virsh "start" "$1"
+
+        # TODO: maybe we can replace this with timeout?
+        for i in {0..$QUICKVM_WAITSTART}; do
+            if quickvm_is_running "$1"; then
+                return 0
+            else
+                sleep 1
+            fi
+        done
+    fi
+
+    if quickvm_is_running "$1"; then
+        return 0
+    else
+        quickvm_log_error "Failed to start VM $1 in $QUICKVM_WAITSTART sec"
+        return 1
+    fi
+}
+
+function quickvm_ensure_stopped() {
+    if quickvm_is_running "$1"; then
+        __quickvm_virsh "destroy" "$1"
+
+        for i in {0..$QUICKVM_WAITSTART}; do
+            if quickvm_is_running "$1"; then
+                sleep 1
+            else
+                return 0
+            fi
+        done
+    else
+        return 0
+    fi
+    quickvm_log_error "Failed to stop VM $1 in $QUICKVM_WAITSTART sec"
+    return 1
+}
+
+
+
+# some thing wrappers around virsh functionality
+
+function quickvm_cmd_virsh() {
+    __quickvm_virsh "$@"
+}
+
+function quickvm_cmd_start() {
+    quickvm_ensure_running "$1"
+}
+
+function quickvm_cmd_stopall() {
+    local vms
+    vms=$(__quickvm_virsh list --all)
+    while read -r vmline; do
+        declare -a vm
+        vm=(${vmline})
+        if [[ "${vm[2]}" == "running" ]]; then
+            if __was_created_by_quickvm "${vm[1]}"; then
+                __quickvm_virsh destroy "${vm[1]}"
+            fi
+        fi
+    done <<< "$vms"
+}
+
+function quickvm_cmd_stop() {
+    # this is really not as brutal as it sounds...
+    if quickvm_is_running "$1"; then
+        __quickvm_virsh destroy "$1"
+    fi
+}
+
+function quickvm_cmd_list() {
+    __quickvm_virsh list --all
+}
+
+function quickvm_cmd_clone() {
+    local new
+    local base
+    new="$1"
+    base="$2"
+    # first get the first disk of the base VM
+    declare -a x
+    x=($(__quickvm_virsh domblklist "$base"))
+
+    # because of a libvirt bug this doesn't work with qcow images
+    # (https://bugzilla.redhat.com/show_bug.cgi?id=1235406)
+    #_virsh -c vol-create-as \
+    #    "$QUICKVM_STORAGE_POOL" "$NEWIMG" "$QUICKVM_SIZE" \
+    #    --format qcow2 \
+    #    --backing-vol "$BASEIMG"
+    # get real path of baseimg
+    local BASEIMG
+    BASEIMG="${x[1]}"
+    local NEWIMG
+    NEWIMG=$(dirname "$BASEIMG")"${new}.qcow2"
+    __quickvm_sudo qemu-img create -f qcow2 \
+        -o "backing_file=${BASEIMG}" \
+        "$NEWIMG"
+
+    # use virt-install to create a new VM, basically this is the
+    virt-install --connect "$QUICKVM_LIBVIRT_URL" \
+        --name "$new" \
+        --virt-type "kvm" \
+        --memory "$QUICKVM_MEMORY" \
+        "--vcpus=${QUICKVM_VCPUS}"\
+        --import \
+        --disk "path=${NEWIMG},bus=virtio" \
+        --graphics none \
+        --noautoconsole \
+        #--check disk_size=off \
+        #--disk "size=20,format=qcow2,backing_store=$BASEIMG,sparse=yes,bus=virtio" \
+
+    __quickvm_virsh desc "$new" \
+        "created with quickvm based on $base" >/dev/null
+}
+
+function quickvm_cmd_trash() {
+    if __was_created_by_quickvm "$1"; then
+        if quickvm_ensure_stopped "$1"; then
+            __quickvm_virsh undefine "$1" --remove-all-storage >/dev/null
+        fi
+    else
+        local trash_cmd
+        trash_cmd="virsh -c \"${QUICKVM_LIBVIRT_URL}\" undefine $1 --remove-all-storage"
+        quickvm_log_error "%s\n%s\n    %s" \
+            "vm '$1' doesn't seem to be created by quickvm" \
+            "you can remove it with the following command manually:" \
+            "$trash_cmd"
+        return 1
+    fi
+}
+
+function quickvm_cmd_shell() {
+    if quickvm_ensure_running "$1"; then
+        declare -a netinfo
+        local ipaddr
+        netinfo=($(__quickvm_virsh domifaddr "$1"))
+        if [[ "${netinfo[2]}" == "ipv4" ]]; then
+            ipaddr=$(echo "${netinfo[3]}" | sed 's/\/[0-9]\{2\}//g')
+        else
+            ipaddr="${netinfo[3]}"
+        fi
+        shift 1
+        ssh "${QUICKVM_USER}@${ipaddr}" "$*"
+    else
+        return
+    fi
+}
+
+
+function quickvm_cmd_help() {
+    echo "$QUICKVM_USAGE"
+    for k in ${!QUICKVM_COMMANDS[*]}; do
+        quickvm_help_for "$k"
+    done
+}
+
+
+function quickvm_main() {
+    if [[ $# -eq 0 ]]; then
+        quickvm_cmd_help
+        return
+    fi
+
+    quickvm_read_config
+
+    local cmd
+    cmd="$1"
+    shift 1
+
+    if [[ $# -eq 1 ]]; then
+        if [[ "$1" == "--help" || "$1" == "help" ]]; then
+            quickvm_help_for "$cmd"
+            return 0
+        fi
+    fi
+
+    case "$cmd" in
+    "clone")
+        quickvm_cmd_clone "$@"
+    ;;
+    "list")
+        quickvm_cmd_list "$@"
+    ;;
+    "shell")
+        quickvm_cmd_shell "$@"
+    ;;
+    "start")
+        quickvm_cmd_start "$@"
+    ;;
+    "stop")
+        quickvm_cmd_stop "$@"
+    ;;
+    "stop-all")
+        quickvm_cmd_stopall "$@"
+    ;;
+    "trash")
+        quickvm_cmd_trash "$@"
+    ;;
+    "virsh")
+        quickvm_cmd_virsh "$@"
+    ;;
+    *) quickvm_cmd_help ;;
+    esac
+}
+
+
+if [[ $(basename "$0") == "quickvm" ]]; then
+    quickvm_main "$@"
+fi
