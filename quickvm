@@ -56,9 +56,9 @@ function quickvm_help_for() {
 
 function __quickvm_sudo() {
     if [[ -x $(which sudo) ]]; then
-        sudo $@
+        sudo "$@"
     else
-        su -c "$@"
+        su -c "$*"
     fi
 }
 
@@ -76,6 +76,40 @@ function quickvm_log_error() {
     echo "" >&2
 }
 
+function __quickvm_get_ipaddr() {
+    declare -a netinfo
+    local ipaddr
+    ipaddr=""
+    netinfo=($(__quickvm_virsh domifaddr "$1"))
+    if [[ $? -eq 0 ]]; then
+        if [[ "${netinfo[2]}" == "ipv4" ]]; then
+            ipaddr=$(echo "${netinfo[3]}" | sed 's/\/[0-9]\{2\}//g')
+        else
+            ipaddr="${netinfo[3]}"
+        fi
+        echo "$ipaddr"
+        return 0
+    else
+        echo ""
+        return 1
+    fi
+}
+
+# http://stackoverflow.com/questions/24412721/elegant-solution-to-implement-timeout-for-bash-commands-and-functions/24413646?noredirect=1#24413646
+function __quickvm_timeout() {
+    local time=10
+    if [[ $1 =~ ^[0-9]+$ ]]; then time=$1; shift; fi
+    # Run in a subshell to avoid job control messages
+    # trap SIGTERM to avoid default notification in non-interactive shell
+    ( "$@" &
+      child=$!
+      trap -- "" SIGTERM
+      ( sleep $time
+        kill $child 2> /dev/null ) &
+      wait $child
+    )
+}
+
 function quickvm_read_config() {
     # get default vcpu count based on the number of available CPU cores on the
     # host node
@@ -89,8 +123,27 @@ function quickvm_read_config() {
     fi
 }
 
+function __quickvm_has_state_running() {
+    __quickvm_virsh dominfo "$1" \
+            | grep -i state \
+            | grep -i running >/dev/null
+}
+
 function quickvm_is_running() {
-    __quickvm_virsh dominfo "$1" | grep -i state | grep -i running >/dev/null
+    if __quickvm_has_state_running "$1"; then
+        local ipaddr
+        ipaddr=$(__quickvm_get_ipaddr "$1")
+        if [[ "$ipaddr" == "" ]]; then
+            return 1
+        else
+            if ping -W 1 -c 1 "$ipaddr" 2>&1 >/dev/null; then
+                return 0
+            else
+                return 1
+            fi
+        fi
+    fi
+    return 1
 }
 
 function quickvm_ensure_running() {
@@ -100,7 +153,7 @@ function quickvm_ensure_running() {
         __quickvm_virsh "start" "$1"
 
         # TODO: maybe we can replace this with timeout?
-        for i in {0..$QUICKVM_WAITSTART}; do
+        for i in `seq 0 "$QUICKVM_WAITSTART"`; do
             if quickvm_is_running "$1"; then
                 return 0
             else
@@ -121,7 +174,7 @@ function quickvm_ensure_stopped() {
     if quickvm_is_running "$1"; then
         __quickvm_virsh "destroy" "$1"
 
-        for i in {0..$QUICKVM_WAITSTART}; do
+        for i in `seq 0 "$QUICKVM_WAITSTART"`; do
             if quickvm_is_running "$1"; then
                 sleep 1
             else
@@ -162,8 +215,8 @@ function quickvm_cmd_stopall() {
 }
 
 function quickvm_cmd_stop() {
-    # this is really not as brutal as it sounds...
     if quickvm_is_running "$1"; then
+        # this is really not as brutal as it sounds...
         __quickvm_virsh destroy "$1"
     fi
 }
@@ -231,16 +284,15 @@ function quickvm_cmd_trash() {
 
 function quickvm_cmd_shell() {
     if quickvm_ensure_running "$1"; then
-        declare -a netinfo
         local ipaddr
-        netinfo=($(__quickvm_virsh domifaddr "$1"))
-        if [[ "${netinfo[2]}" == "ipv4" ]]; then
-            ipaddr=$(echo "${netinfo[3]}" | sed 's/\/[0-9]\{2\}//g')
+        ipaddr=$(__quickvm_get_ipaddr "$1")
+        if [[ "$ipaddr" == "" ]]; then
+            quickvm_log_error "VM '$1' has no ip address."
+            return
         else
-            ipaddr="${netinfo[3]}"
+            shift 1
+            ssh "${QUICKVM_USER}@${ipaddr}" "$*"
         fi
-        shift 1
-        ssh "${QUICKVM_USER}@${ipaddr}" "$*"
     else
         return
     fi
