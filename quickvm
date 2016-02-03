@@ -248,10 +248,19 @@ function quickvm_cmd_clone() {
     local BASEIMG
     BASEIMG="${x[1]}"
     local NEWIMG
-    NEWIMG=$(dirname "$BASEIMG")"${new}.qcow2"
-    __quickvm_sudo qemu-img create -f qcow2 \
-        -o "backing_file=${BASEIMG}" \
-        "$NEWIMG"
+    local dir
+    imgdir=$(dirname "$BASEIMG")
+    NEWIMG="${imgdir}/${new}.qcow2"
+
+    if [[ -d "${imgdir}" && -w "${imgdir}" ]]; then
+        qemu-img create -f qcow2 \
+            -o "backing_file=${BASEIMG}" \
+            "$NEWIMG"
+    else
+        __quickvm_sudo qemu-img create -f qcow2 \
+            -o "backing_file=${BASEIMG}" \
+            "$NEWIMG"
+    fi
 
     # use virt-install to create a new VM, basically this is the
     virt-install --connect "$QUICKVM_LIBVIRT_URL" \
