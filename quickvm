@@ -170,9 +170,14 @@ function quickvm_ensure_running() {
     fi
 }
 
+function __quickvm_stop_vm() {
+    # this is really not as brutal as it sounds...
+    __quickvm_virsh "destroy" "--graceful" "$1"
+}
+
 function quickvm_ensure_stopped() {
     if quickvm_is_running "$1"; then
-        __quickvm_virsh "destroy" "$1"
+        __quickvm_stop_vm "$1"
 
         for i in `seq 0 "$QUICKVM_WAITSTART"`; do
             if quickvm_is_running "$1"; then
@@ -208,7 +213,7 @@ function quickvm_cmd_stopall() {
         vm=(${vmline})
         if [[ "${vm[2]}" == "running" ]]; then
             if __was_created_by_quickvm "${vm[1]}"; then
-                __quickvm_virsh destroy "${vm[1]}"
+                __quickvm_stop_vm "${vm[1]}"
             fi
         fi
     done <<< "$vms"
@@ -216,8 +221,7 @@ function quickvm_cmd_stopall() {
 
 function quickvm_cmd_stop() {
     if quickvm_is_running "$1"; then
-        # this is really not as brutal as it sounds...
-        __quickvm_virsh destroy "$1"
+        __quickvm_stop_vm "$1"
     fi
 }
 
