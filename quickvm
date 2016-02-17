@@ -34,11 +34,13 @@ QUICKVM_WAITSTART=5
 declare -A QUICKVM_COMMANDS
 QUICKVM_COMMANDS[clone]="<newvm> <basevm>\n create newvm based on first basevm disk"
 QUICKVM_COMMANDS[list]=" \n list all virtual machines"
-QUICKVM_COMMANDS[shell]="<vm> [command]\n ssh into and optionally execute the given commands"
+QUICKVM_COMMANDS[shell]="[--user|-u user] <vm> [command]\n ssh into and optionally execute the given commands"
+QUICKVM_COMMANDS[sshkeys]="[--user|-u user] <vm>\n install ssh public keys on the vm using ssh-copy-id"
 QUICKVM_COMMANDS[start]="<vm>\n start a vm"
 QUICKVM_COMMANDS[stop-all]="<vm>\n stop all VMs created by quickvm"
 QUICKVM_COMMANDS[stop]="<vm>\n delete a vm"
 QUICKVM_COMMANDS[trash]="<vm>\n delete a vm and associated storage images created by quickvm"
+QUICKVM_COMMANDS[ipaddr]="<vm>\n print the ip addr of the given vm"
 QUICKVM_COMMANDS[virsh]="<virsh commands>\n just execute virsh with the given command"
 
 
@@ -53,6 +55,11 @@ function quickvm_help_for() {
     done
 }
 
+function quickvm_log_error() {
+    printf "quickvm-error: " >&2
+    printf "$@" >&2
+    echo "" >&2
+}
 
 function __quickvm_sudo() {
     if [[ -x $(which sudo) ]]; then
@@ -70,18 +77,12 @@ function __was_created_by_quickvm() {
     __quickvm_virsh desc "$1" | grep -i 'quickvm'
 }
 
-function quickvm_log_error() {
-    printf "quickvm-error: " >&2
-    printf "$@" >&2
-    echo "" >&2
-}
-
 function __quickvm_get_ipaddr() {
     declare -a netinfo
     local ipaddr
     ipaddr=""
     netinfo=($(__quickvm_virsh domifaddr "$1"))
-    if [[ $? -eq 0 ]]; then
+    if [[ $? -eq 0 && "$netinfo" != "" ]]; then
         if [[ "${netinfo[2]}" == "ipv4" ]]; then
             ipaddr=$(echo "${netinfo[3]}" | sed 's/\/[0-9]\{2\}//g')
         else
@@ -151,6 +152,10 @@ function quickvm_ensure_running() {
         return 0
     else
         __quickvm_virsh "start" "$1"
+        if [[ $? -ne 0 ]]; then
+            quickvm_log_error "failed to start '$1' via virsh!"
+            return 1
+        fi
 
         # TODO: maybe we can replace this with timeout?
         for i in `seq 0 "$QUICKVM_WAITSTART"`; do
@@ -165,7 +170,7 @@ function quickvm_ensure_running() {
     if quickvm_is_running "$1"; then
         return 0
     else
-        quickvm_log_error "Failed to start VM $1 in $QUICKVM_WAITSTART sec"
+        quickvm_log_error "Failed to start VM $1 in ~ $QUICKVM_WAITSTART sec"
         return 1
     fi
 }
@@ -193,7 +198,9 @@ function quickvm_ensure_stopped() {
     return 1
 }
 
-
+function quickvm_get_user() {
+    echo "$QUICKVM_USER"
+}
 
 # some thing wrappers around virsh functionality
 
@@ -262,7 +269,8 @@ function quickvm_cmd_clone() {
             "$NEWIMG"
     fi
 
-    # use virt-install to create a new VM, basically this is the
+    # use virt-install to create a new VM, basically this is the same as the
+    # old VM with the cloned disk.
     virt-install --connect "$QUICKVM_LIBVIRT_URL" \
         --name "$new" \
         --virt-type "kvm" \
@@ -272,6 +280,7 @@ function quickvm_cmd_clone() {
         --disk "path=${NEWIMG},bus=virtio" \
         --graphics none \
         --noautoconsole \
+        --graphics spice \
         #--check disk_size=off \
         #--disk "size=20,format=qcow2,backing_store=$BASEIMG,sparse=yes,bus=virtio" \
 
@@ -296,6 +305,66 @@ function quickvm_cmd_trash() {
 }
 
 function quickvm_cmd_shell() {
+    local vm
+    local user
+    local ipaddr
+
+    if [[ "$1" == "-u" || "$1" == "--user" ]]; then
+        user="$2"
+        vm="$3"
+        shift 3
+    else
+        vm="$1"
+        user=$(quickvm_get_user "$vm")
+        shift 1
+    fi
+
+    if quickvm_ensure_running "$vm"; then
+
+        ipaddr=$(__quickvm_get_ipaddr "$vm")
+
+        if [[ "$ipaddr" == "" || "$user" == "" ]]; then
+            quickvm_log_error "VM '$vm' has no ip address."
+            return
+        else
+            ssh "${user}@${ipaddr}" "$*"
+        fi
+    else
+        return
+    fi
+}
+
+function quickvm_cmd_install_sshkeys() {
+    local vm
+    local user
+    local ipaddr
+
+    if [[ "$1" == "-u" || "$1" == "--user" ]]; then
+        user="$2"
+        vm="$3"
+        shift 3
+    else
+        vm="$1"
+        user=$(quickvm_get_user "$vm")
+        shift 1
+    fi
+
+    if quickvm_ensure_running "$vm"; then
+
+        ipaddr=$(__quickvm_get_ipaddr "$vm")
+
+        if [[ "$ipaddr" == "" || "$user" == "" ]]; then
+            quickvm_log_error "VM '$vm' has no ip address."
+            return
+        else
+            ssh-copy-id "${user}@${ipaddr}"
+        fi
+    else
+        return
+    fi
+}
+
+function quickvm_cmd_print_ipaddr() {
     if quickvm_ensure_running "$1"; then
         local ipaddr
         ipaddr=$(__quickvm_get_ipaddr "$1")
@@ -303,14 +372,27 @@ function quickvm_cmd_shell() {
             quickvm_log_error "VM '$1' has no ip address."
             return
         else
-            shift 1
-            ssh "${QUICKVM_USER}@${ipaddr}" "$*"
+            echo "${ipaddr}"
         fi
     else
         return
     fi
 }
 
+function quickvm_cmd_launch_viewer() {
+    if which virt-viewer; then
+        if quickvm_ensure_running "$1"; then
+            virt-viewer -a -c "$QUICKVM_LIBVIRT_URL" "$1"
+            return $?
+        else
+            quickvm_log_error "failed to start vm '$1'"
+            return 1
+        fi
+    else
+        quickvm_log_error "virt-viewer isn't installed"
+        return 1
+    fi
+}
 
 function quickvm_cmd_help() {
     echo "$QUICKVM_USAGE"
@@ -318,7 +400,6 @@ function quickvm_cmd_help() {
         quickvm_help_for "$k"
     done
 }
-
 
 function quickvm_main() {
     if [[ $# -eq 0 ]]; then
@@ -360,6 +441,15 @@ function quickvm_main() {
     ;;
     "trash")
         quickvm_cmd_trash "$@"
+    ;;
+    "ipaddr")
+        quickvm_cmd_print_ipaddr "$@"
+    ;;
+    "view")
+        quickvm_cmd_launch_viewer "$@"
+    ;;
+    "sshkeys")
+        quickvm_cmd_install_sshkeys "$@"
     ;;
     "virsh")
         quickvm_cmd_virsh "$@"
