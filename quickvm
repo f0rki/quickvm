@@ -28,6 +28,9 @@ QUICKVM_MEMORY="1024"
 QUICKVM_USER="$USER"
 declare -i QUICKVM_WAITSTART
 QUICKVM_WAITSTART=5
+QUICKVM_TRANSFER_COMMAND="rsync"
+QUICKVM_TRANSFER_ARGS="-r"
+QUICKVM_VIEWER_APP="virt-viewer"
 
 
 # help message for the commands
@@ -42,6 +45,9 @@ QUICKVM_COMMANDS[stop]="<vm>\n delete a vm"
 QUICKVM_COMMANDS[trash]="<vm>\n delete a vm and associated storage images created by quickvm"
 QUICKVM_COMMANDS[ipaddr]="<vm>\n print the ip addr of the given vm"
 QUICKVM_COMMANDS[virsh]="<virsh commands>\n just execute virsh with the given command"
+QUICKVM_COMMANDS[view]="<vm>\n launch viewer application for the given vm"
+QUICKVM_COMMANDS[push]="[--user|-u user] <vm> <local> <remote>\n transfer data to vm"
+QUICKVM_COMMANDS[pull]="[--user|-u user] <vm> <remote> [local=./]\n transfer data from vm"
 
 
 function quickvm_help_for() {
@@ -355,12 +361,88 @@ function quickvm_cmd_install_sshkeys() {
 
         if [[ "$ipaddr" == "" || "$user" == "" ]]; then
             quickvm_log_error "VM '$vm' has no ip address."
-            return
+            return 1
         else
             ssh-copy-id "${user}@${ipaddr}"
         fi
     else
         return
+    fi
+}
+
+function quickvm_cmd_transfer() {
+    local vm
+    local user
+    local ipaddr
+    local action
+
+    if [[ $# -lt 1 ]]; then
+        quickvm_log_error "invalid number of arguments '$*'"
+        quickvm_help_for "pull"
+        quickvm_help_for "push"
+        return 1
+    fi
+
+    action="$1"
+    if [[ "$action" != "pull" && "$action" != "push" ]]; then
+        quickvm_log_error "invalid first argument '$1' must be (push|pull)"
+        quickvm_help_for "pull"
+        quickvm_help_for "push"
+        return 1
+    fi
+    shift 1
+
+    if [[ "$1" == "-u" || "$1" == "--user" ]]; then
+        if [[ "$action" == "pull" && ( $# -lt 4 || $# -gt 5 ) ]] \
+            || [[ "$action" == "push" && $# -ne 5 ]]; then
+            quickvm_log_error "invalid number of arguments '$*'"
+            quickvm_help_for "$action"
+            return 1
+        fi
+        user="$2"
+        vm="$3"
+        shift 3
+    else
+        if [[ "$action" == "pull" && ( $# -lt 2 || $# -gt 3 ) ]] \
+            || [[ "$action" == "push" && $# -ne 3 ]]; then
+            quickvm_log_error "invalid number of arguments '$*'"
+            quickvm_help_for "$action"
+            return 1
+        fi
+        vm="$1"
+        user=$(quickvm_get_user "$vm")
+        shift 1
+    fi
+
+    if quickvm_ensure_running "$vm"; then
+
+        ipaddr=$(__quickvm_get_ipaddr "$vm")
+
+        if [[ "$ipaddr" == "" || "$user" == "" ]]; then
+            quickvm_log_error "VM '$vm' has no ip address."
+            return 1
+        else
+            local from
+            local to
+            local host
+            host="${user}@${ipaddr}"
+            if [[ "$action" == "push" ]]; then
+                from="$1"
+                to="${host}:$2"
+            elif [[ "$action" == "pull" ]]; then
+                from="${host}:$1"
+                if [[ $# -eq 2 ]]; then
+                    to="$2"
+                else
+                    to="."
+                fi
+            fi
+            $QUICKVM_TRANSFER_COMMAND $QUICKVM_TRANSFER_ARGS "$from" "$to"
+            return $?
+        fi
+    else
+        quickvm_log_error "VM '$vm' not running"
+        return 1
     fi
 }
 
@@ -380,9 +462,14 @@ function quickvm_cmd_print_ipaddr() {
 }
 
 function quickvm_cmd_launch_viewer() {
-    if which virt-viewer; then
+    if [[ $# -ne 1 ]]; then
+        quickvm_log_error "invalid number of arguments"
+        quickvm_help_for "view"
+        return 1
+    fi
+    if which "$QUICKVM_VIEWER_APP"; then
         if quickvm_ensure_running "$1"; then
-            virt-viewer -a -c "$QUICKVM_LIBVIRT_URL" "$1"
+            "$QUICKVM_VIEWER_APP" -a -c "$QUICKVM_LIBVIRT_URL" "$1"
             return $?
         else
             quickvm_log_error "failed to start vm '$1'"
@@ -453,6 +540,12 @@ function quickvm_main() {
     ;;
     "virsh")
         quickvm_cmd_virsh "$@"
+    ;;
+    "push")
+        quickvm_cmd_transfer "push" "$@"
+    ;;
+    "pull")
+        quickvm_cmd_transfer "pull" "$@"
     ;;
     *) quickvm_cmd_help ;;
     esac
