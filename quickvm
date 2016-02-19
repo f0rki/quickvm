@@ -437,6 +437,15 @@ function quickvm_cmd_transfer() {
                     to="."
                 fi
             fi
+
+            if ! (which "$QUICKVM_TRANSFER_COMMAND" 2>&1 >/dev/null && \
+                quickvm_cmd_shell "-u" "$user" "$vm" which "$QUICKVM_TRANSFER_COMMAND" 2>&1 >/dev/null);
+            then
+                quickvm_log_warn "transfer command $QUICKVM_TRANSFER_COMMAND not available: falling back to scp"
+                QUICKVM_TRANSFER_COMMAND="scp"
+                QUICKVM_TRANSFER_ARGS="-r"
+            fi
+
             $QUICKVM_TRANSFER_COMMAND $QUICKVM_TRANSFER_ARGS "$from" "$to"
             return $?
         fi
