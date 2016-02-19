@@ -67,6 +67,12 @@ function quickvm_log_error() {
     echo "" >&2
 }
 
+function quickvm_log_warn() {
+    printf "quickvm-warn: " >&2
+    printf "$@" >&2
+    echo "" >&2
+}
+
 function __quickvm_sudo() {
     if [[ -x $(which sudo) ]]; then
         sudo "$@"
@@ -331,12 +337,13 @@ function quickvm_cmd_shell() {
 
         if [[ "$ipaddr" == "" || "$user" == "" ]]; then
             quickvm_log_error "VM '$vm' has no ip address."
-            return
+            return 1
         else
             ssh "${user}@${ipaddr}" "$*"
+            return $?
         fi
     else
-        return
+        return 1
     fi
 }
 
@@ -492,7 +499,8 @@ function quickvm_cmd_launch_viewer() {
 
 function quickvm_cmd_help() {
     echo "$QUICKVM_USAGE"
-    for k in ${!QUICKVM_COMMANDS[*]}; do
+    keys=$(echo "${!QUICKVM_COMMANDS[*]}" | sed 's/ /\n/g' | sort | sed 's/\n/ /g')
+    for k in $keys; do
         quickvm_help_for "$k"
     done
 }
