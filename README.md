@@ -33,6 +33,13 @@ and then throw away the vm
 
     quickvm trash testvm
 
+It's also possible to transfer data from and to the VM
+
+    quickvm push testvm ./data /tmp/
+    quickvm pull testvm /var/log/whatever.log ./logs/
+
+The default is to use rsync, with a fallback to scp if it isn't installed.
+
 
 ## ssh with different username
 
@@ -45,6 +52,10 @@ or change the default:
 
     mkdir -p ~/.config/quickvm
     echo "USER=root" >> ~/.config/quickvm/config.sh
+
+Some commands also support the `-u` command line switch:
+
+    quickvm shell -u root
 
 
 ## Requirements
