@@ -82,11 +82,11 @@ function __quickvm_sudo() {
 }
 
 function __quickvm_virsh() {
-    virsh -q -c "$QUICKVM_LIBVIRT_URL" $@
+    virsh -q -c "$QUICKVM_LIBVIRT_URL" "$@"
 }
 
 function __was_created_by_quickvm() {
-    __quickvm_virsh desc "$1" | grep -i 'quickvm'
+    __quickvm_virsh desc "$1" | grep -i 'quickvm' > /dev/null
 }
 
 function __quickvm_get_ipaddr() {
@@ -297,22 +297,18 @@ function quickvm_cmd_clone() {
         #--disk "size=20,format=qcow2,backing_store=$BASEIMG,sparse=yes,bus=virtio" \
 
     __quickvm_virsh desc "$new" \
-        "created with quickvm based on $base" >/dev/null
+        "quickvm: created based on $base" >/dev/null
 }
 
 function quickvm_cmd_trash() {
-    if __was_created_by_quickvm "$1"; then
+    local choice
+    echo "Deleting VM $1 and it's storage"
+    echo "Are you sure? y/n"
+    read choice
+    if [[ "$choice" == "y" ]]; then
         if quickvm_ensure_stopped "$1"; then
             __quickvm_virsh undefine "$1" --remove-all-storage >/dev/null
         fi
-    else
-        local trash_cmd
-        trash_cmd="virsh -c \"${QUICKVM_LIBVIRT_URL}\" undefine $1 --remove-all-storage"
-        quickvm_log_error "%s\n%s\n    %s" \
-            "vm '$1' doesn't seem to be created by quickvm" \
-            "you can remove it with the following command manually:" \
-            "$trash_cmd"
-        return 1
     fi
 }
 
