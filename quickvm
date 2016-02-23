@@ -67,6 +67,11 @@ function quickvm_log_error() {
     echo "" >&2
 }
 
+function __quickvm_fail_hard() {
+    quickvm_log_error "$@"
+    exit 1
+}
+
 function quickvm_log_warn() {
     printf "quickvm-warn: " >&2
     printf "$@" >&2
@@ -137,8 +142,7 @@ function quickvm_read_config() {
 }
 
 function __quickvm_has_state_running() {
-    __quickvm_virsh dominfo "$1" \
-            | grep -i state \
+    __quickvm_virsh domstate "$1" \
             | grep -i running >/dev/null
 }
 
@@ -187,23 +191,33 @@ function quickvm_ensure_running() {
     fi
 }
 
+function __quickvm_is_stopped() {
+    local out
+    out=$(__quickvm_virsh "domstate" "$1")
+    if [[ $? -ne 0 ]]; then
+        __quickvm_fail_hard "virsh failed"
+    fi
+    [[ "$out" =~ s|Shut\ o|Off ]]
+}
+
 function __quickvm_stop_vm() {
-    # this is really not as brutal as it sounds...
-    __quickvm_virsh "destroy" "--graceful" "$1"
+    __quickvm_virsh "shutdown" "$1"
 }
 
 function quickvm_ensure_stopped() {
-    if quickvm_is_running "$1"; then
+    if ! __quickvm_is_stopped "$1"; then
         __quickvm_stop_vm "$1"
 
         for i in `seq 0 "$QUICKVM_WAITSTART"`; do
-            if quickvm_is_running "$1"; then
+            if __quickvm_is_stopped "$1"; then
                 sleep 1
-            else
                 return 0
+            else
+                sleep 1
             fi
         done
     else
+        sleep 1
         return 0
     fi
     quickvm_log_error "Failed to stop VM $1 in $QUICKVM_WAITSTART sec"
