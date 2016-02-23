@@ -92,7 +92,7 @@ function __quickvm_virsh() {
 }
 
 function __was_created_by_quickvm() {
-    __quickvm_virsh desc "$1" | grep -i 'quickvm' > /dev/null
+    __quickvm_get_desc "$1" | grep -i 'quickvm' > /dev/null
 }
 
 function __quickvm_get_ipaddr() {
@@ -225,20 +225,34 @@ function quickvm_ensure_stopped() {
     return 1
 }
 
+function __quickvm_get_desc() {
+    # args
+    local vm
+    vm="$1"
+    #
+    desc=$(__quickvm_virsh "desc" "$vm")
+    if [[ $? -ne 0 || "$desc" == "" || "$desc" =~ N|no\ d|Desc ]]; then
+        #quickvm_log_warn "couldn't get a description for $vm\n" "$desc"
+        echo ""
+    else
+        echo "$desc"
+    fi
+}
+
 function __quickvm_get_config_string() {
     # args
     local vm
     vm="$1"
     #
     local desc
-    desc=$(__quickvm_virsh "desc" "$vm")
-    if [[ $? -ne 0 || "$desc" == "" || "$desc" =~ N|n\ d|Desc ]]; then
+    desc=$(__quickvm_get_desc "$vm")
+    if [[ "$desc" == "" ]]; then
         echo ""
     else
         echo "$desc" \
             | grep 'quickvm-config{.\+}' -o -m 1 \
-            | cut -d '{' -f 2 \
-            | cut -d '}' -f 1
+            | cut -d '{' -f 2
+            #| head -c -2
     fi
 }
 
@@ -249,14 +263,15 @@ function __quickvm_set_config_string() {
     vm="$1"
     config="$2"
     #
+    desc=$(__quickvm_get_desc "$vm")
     current=$(__quickvm_get_config_string "$vm")
     if [[ $? -ne 0 || "$current" == "" ]]; then
-        __quickvm_virsh "desc" "$1" \
-            $(printf "\nmetadata for quickvm:\nquickvm-config{${config}}\n")
+        __quickvm_virsh "desc" "$vm" \
+            $(printf "$desc\nmetadata for quickvm:\nquickvm-config{${config}}\n") >/dev/null
     else
-        __quickvm_virsh "desc" "$1" \
-            $(echo "$current" \
-                | sed "s/quickvm-config{.\+}/quickvm-config{$config}/")
+        __quickvm_virsh "desc" "$vm" \
+            $(echo "$desc" \
+                | sed "s/quickvm-config{.\+}/quickvm-config{$config}/") >/dev/null
     fi
 }
 
@@ -264,20 +279,27 @@ function quickvm_config_set() {
     # args
     local vm
     local key
-    local val
+    local value
     vm="$1"
     key="$2"
-    val="$3"
+    value="$3"
     #
+    echo "DEBUG: get previous config"
     local config
     config=$(__quickvm_get_config_string "$vm")
+    echo "got the following:"
+    echo "$config"
     if echo "$config" | grep -F "$key" > /dev/null; then
         config=$(echo "$config" \
             | tr "," "\n" \
             | sed "s/$key=.\+/$key=$value/" \
             | tr "\n" ",")
     else
-        config="$config,$key=$value"
+        if [[ "$config" == "" ]]; then
+            config="$key=$value"
+        else
+            config="$config,$key=$value"
+        fi
     fi
     __quickvm_set_config_string "$vm" "$config"
 }
@@ -323,6 +345,16 @@ function quickvm_cmd_virsh() {
 }
 
 function quickvm_cmd_start() {
+
+    if [[ $(quickvm_config_get "$1" "isbasevm") == "true" ]] ; then
+        echo "WARNING: Starting and using a base VM might corrupt child VMs"
+        echo "Do you really wanna do this? y/n"
+        local choice
+        read choice
+        if ! [[ "$choice" =~ y ]]; then
+            return 0
+        fi
+    fi
     quickvm_ensure_running "$1"
 }
 
@@ -357,6 +389,10 @@ function quickvm_cmd_clone() {
     new="$1"
     base="$2"
     #
+
+    if ! quickvm_ensure_stopped "$base"; then
+        __quickvm_fail_hard "failed to stop basevm '%s'" "$base"
+    fi
 
     # first get the first disk of the base VM
     declare -a x
@@ -403,6 +439,7 @@ function quickvm_cmd_clone() {
 
     local user
     user=$(quickvm_get_user "$base")
+    quickvm_config_set "$base" "isbasevm" "true"
     __quickvm_set_config_string "$new" "user=$user,base=$base"
 }
 
