@@ -19,7 +19,8 @@ set -eu -o pipefail
 QUICKVM_USAGE="$0 <command> [command options]"
 
 # setup sane default here, will be overwritten with read_config
-QUICKVM_CONFIG_FILE="$HOME/.config/quickvm/config.sh"
+QUICKVM_CONFIG_DIR="$HOME/.config/quickvm/"
+QUICKVM_CONFIG_FILE="$QUICKVM_CONFIG_DIR/config.sh"
 QUICKVM_LIBVIRT_URL="qemu:///system"
 QUICKVM_SIZE="20G"
 QUICKVM_STORAGE_POOL="default"
@@ -224,11 +225,98 @@ function quickvm_ensure_stopped() {
     return 1
 }
 
-function quickvm_get_user() {
-    echo "$QUICKVM_USER"
+function __quickvm_get_config_string() {
+    # args
+    local vm
+    vm="$1"
+    #
+    local desc
+    desc=$(__quickvm_virsh "desc" "$vm")
+    if [[ $? -ne 0 || "$desc" == "" || "$desc" =~ N|n\ d|Desc ]]; then
+        echo ""
+    else
+        echo "$desc" \
+            | grep 'quickvm-config{.\+}' -o -m 1 \
+            | cut -d '{' -f 2 \
+            | cut -d '}' -f 1
+    fi
 }
 
-# some thing wrappers around virsh functionality
+function __quickvm_set_config_string() {
+    # args
+    local vm
+    local config
+    vm="$1"
+    config="$2"
+    #
+    current=$(__quickvm_get_config_string "$vm")
+    if [[ $? -ne 0 || "$current" == "" ]]; then
+        __quickvm_virsh "desc" "$1" \
+            $(printf "\nmetadata for quickvm:\nquickvm-config{${config}}\n")
+    else
+        __quickvm_virsh "desc" "$1" \
+            $(echo "$current" \
+                | sed "s/quickvm-config{.\+}/quickvm-config{$config}/")
+    fi
+}
+
+function quickvm_config_set() {
+    # args
+    local vm
+    local key
+    local val
+    vm="$1"
+    key="$2"
+    val="$3"
+    #
+    local config
+    config=$(__quickvm_get_config_string "$vm")
+    if echo "$config" | grep -F "$key" > /dev/null; then
+        config=$(echo "$config" \
+            | tr "," "\n" \
+            | sed "s/$key=.\+/$key=$value/" \
+            | tr "\n" ",")
+    else
+        config="$config,$key=$value"
+    fi
+    __quickvm_set_config_string "$vm" "$config"
+}
+
+function quickvm_config_get() {
+    # args
+    local vm
+    local key
+    vm="$1"
+    key="$2"
+    #
+    local config
+
+    config=$(__quickvm_get_config_string "$vm")
+    if [[ $? != 0 || "$config" == "" ]]; then
+        echo ""
+        return 1
+    fi
+
+    echo "$config" \
+        | tr ',' "\n" \
+        | awk -F= "\$1==\"$key\"{print \$2}" \
+        | head -n 1
+    return 0
+}
+
+function quickvm_get_user() {
+    # args
+    local vm
+    vm="$1"
+    #
+    local user
+    user=$(quickvm_config_get "$vm" "user")
+    if [[ $? -ne 0 || "$user" == "" ]]; then
+        echo "$QUICKVM_USER"
+    else
+        echo "$user"
+    fi
+}
 
 function quickvm_cmd_virsh() {
     __quickvm_virsh "$@"
@@ -263,10 +351,13 @@ function quickvm_cmd_list() {
 }
 
 function quickvm_cmd_clone() {
+    # args
     local new
     local base
     new="$1"
     base="$2"
+    #
+
     # first get the first disk of the base VM
     declare -a x
     x=($(__quickvm_virsh domblklist "$base"))
@@ -281,7 +372,7 @@ function quickvm_cmd_clone() {
     local BASEIMG
     BASEIMG="${x[1]}"
     local NEWIMG
-    local dir
+    local imgdir
     imgdir=$(dirname "$BASEIMG")
     NEWIMG="${imgdir}/${new}.qcow2"
 
@@ -306,12 +397,13 @@ function quickvm_cmd_clone() {
         --disk "path=${NEWIMG},bus=virtio" \
         --graphics none \
         --noautoconsole \
-        --graphics spice \
+        --graphics spice
         #--check disk_size=off \
         #--disk "size=20,format=qcow2,backing_store=$BASEIMG,sparse=yes,bus=virtio" \
 
-    __quickvm_virsh desc "$new" \
-        "quickvm: created based on $base" >/dev/null
+    local user
+    user=$(quickvm_get_user "$base")
+    __quickvm_set_config_string "$new" "user=$user,base=$base"
 }
 
 function quickvm_cmd_trash() {
