@@ -316,9 +316,15 @@ function quickvm_cmd_clone() {
 
 function quickvm_cmd_trash() {
     local choice
-    echo "Deleting VM $1 and it's storage"
-    echo "Are you sure? y/n"
-    read choice
+    if [[ $1 == "-y" ]]; then
+        choice="y"
+        shift 1
+    else
+        echo "Deleting VM $1 and it's storage"
+        echo "If it's used as a base for other VMs you will break those."
+        echo "Are you sure? y/n"
+        read choice
+    fi
     if [[ "$choice" == "y" ]]; then
         if quickvm_ensure_stopped "$1"; then
             __quickvm_virsh undefine "$1" --remove-all-storage >/dev/null
