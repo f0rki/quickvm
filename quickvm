@@ -251,8 +251,8 @@ function __quickvm_get_config_string() {
     else
         echo "$desc" \
             | grep 'quickvm-config{.\+}' -o -m 1 \
-            | cut -d '{' -f 2
-            #| head -c -2
+            | cut -d '{' -f 2 \
+            | head -c -2
     fi
 }
 
@@ -284,15 +284,13 @@ function quickvm_config_set() {
     key="$2"
     value="$3"
     #
-    echo "DEBUG: get previous config"
     local config
     config=$(__quickvm_get_config_string "$vm")
-    echo "got the following:"
-    echo "$config"
     if echo "$config" | grep -F "$key" > /dev/null; then
         config=$(echo "$config" \
             | tr "," "\n" \
-            | sed "s/$key=.\+/$key=$value/" \
+            | sed "s/^$key=.\+\$/$key=$value/" \
+            | head -c -1 \
             | tr "\n" ",")
     else
         if [[ "$config" == "" ]]; then
