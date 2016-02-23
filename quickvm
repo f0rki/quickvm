@@ -418,9 +418,14 @@ function quickvm_cmd_trash() {
         read choice
     fi
     if [[ "$choice" == "y" ]]; then
-        if quickvm_ensure_stopped "$1"; then
-            __quickvm_virsh undefine "$1" --remove-all-storage >/dev/null
+        if ! __quickvm_is_stopped "$1"; then
+            # we can shutdown non-gracefully since, we will remove it anyway
+            __quickvm_virsh "destroy" "$1"
+            if [[ $? -ne 0 ]] ; then
+                __quickvm_fail_hard "couldn't stop VM $1"
+            fi
         fi
+        __quickvm_virsh undefine "$1" --remove-all-storage >/dev/null
     fi
 }
 
