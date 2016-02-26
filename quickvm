@@ -338,6 +338,26 @@ function quickvm_get_user() {
     fi
 }
 
+function quickvm_cmd_setuser() {
+    # args
+    local vm
+    vm="$1"
+    local newuser
+    # optional $2
+    #
+    if [[ $# -eq 1 ]]; then
+        quickvm_get_user "$vm"
+        return 0
+    elif [[ $# -eq 2 ]]; then
+        newuser="$2"
+        quickvm_config_set "$vm" "user" "$newuser"
+    else
+        quickvm_log_error "Invalid number of arguments \"$@\""
+        quickvm_help_for "setuser"
+        return 1
+    fi
+}
+
 function quickvm_cmd_virsh() {
     __quickvm_virsh "$@"
 }
@@ -710,6 +730,9 @@ function quickvm_main() {
     ;;
     "sshkeys")
         quickvm_cmd_install_sshkeys "$@"
+    ;;
+    "setuser")
+        quickvm_cmd_setuser "$@"
     ;;
     "virsh")
         quickvm_cmd_virsh "$@"

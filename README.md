@@ -17,7 +17,7 @@ some of this agility to libvirt.
 
 First create a VM based on a existing base VM. Currently this creates a
 completely new VM with the first qcow2 image if the base-vm as a backing store
-Wfor the newly created qcow2 image of testvm.
+for the newly created qcow2 image of testvm.
 
     quickvm clone basevm testvm
 
@@ -44,18 +44,18 @@ The default is to use rsync, with a fallback to scp if it isn't installed.
 ## ssh with different username
 
 Per default quickvm executes ssh with your current username (i.e. `$USER`) you
-can change this using the `env` command, e.g.
-
-    env USER=root quickvm shell
-
-or change the default:
-
-    mkdir -p ~/.config/quickvm
-    echo "USER=root" >> ~/.config/quickvm/config.sh
-
-Some commands also support the `-u` command line switch:
+can change this using the `-u` option (supported by a couple of commands):
 
     quickvm shell -u root
+
+or change the global default:
+
+    mkdir -p ~/.config/quickvm
+    echo "QUICKVM_USER=root" >> ~/.config/quickvm/config.sh
+
+or change the default per VM:
+
+    quickvm setuser myvm root
 
 
 ## Requirements
@@ -71,7 +71,8 @@ Basically none except for libvirt and things that come with libvirt:
   - File sharing
     - Make it easy to share files via 9p
       (if possible even in the face of SELinux)
-    - Wrap scp/rsync to copy files to/from the VM
+  - Template scripts to create VMs
+    - Execute a script that sets up a VM out of the blue
   - Provisiong (vagrant style)
     - copy files
     - execute a shell script
