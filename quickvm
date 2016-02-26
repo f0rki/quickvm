@@ -371,7 +371,7 @@ function quickvm_cmd_stopall() {
 }
 
 function quickvm_cmd_stop() {
-    if quickvm_is_running "$1"; then
+    if ! __quickvm_is_stopped "$1"; then
         __quickvm_stop_vm "$1"
     fi
 }
@@ -410,6 +410,12 @@ function quickvm_cmd_clone() {
     imgdir=$(dirname "$BASEIMG")
     NEWIMG="${imgdir}/${new}.qcow2"
 
+    # TODO: We can avoid corrupting the disk images, by moving the base vm also
+    # to a new qcow image with the base image as backing store.
+    # So we need another call to qemu-img and then
+    # we can use virt-xml to change the disk image:
+    #virt-xml "$vm" --edit target=vda --disk "path=$baseimg.snap.qcow2"
+
     if [[ -d "${imgdir}" && -w "${imgdir}" ]]; then
         qemu-img create -f qcow2 \
             -o "backing_file=${BASEIMG}" \
@@ -439,6 +445,8 @@ function quickvm_cmd_clone() {
     user=$(quickvm_get_user "$base")
     quickvm_config_set "$base" "isbasevm" "true"
     __quickvm_set_config_string "$new" "user=$user,base=$base"
+
+    quickvm_cmd_stop "$new"
 }
 
 function quickvm_cmd_trash() {
