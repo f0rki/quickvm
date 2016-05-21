@@ -639,17 +639,13 @@ function quickvm_cmd_transfer() {
 }
 
 function quickvm_cmd_print_ipaddr() {
-    if quickvm_ensure_running "$1"; then
-        local ipaddr
-        ipaddr=$(__quickvm_get_ipaddr "$1")
-        if [[ "$ipaddr" == "" ]]; then
-            quickvm_log_error "VM '$1' has no ip address."
-            return
-        else
-            echo "${ipaddr}"
-        fi
-    else
+    local ipaddr
+    ipaddr=$(__quickvm_get_ipaddr "$1")
+    if [[ "$ipaddr" == "" ]]; then
+        quickvm_log_error "VM '$1' has no ip address."
         return
+    else
+        echo "${ipaddr}"
     fi
 }
 
@@ -660,13 +656,12 @@ function quickvm_cmd_launch_viewer() {
         return 1
     fi
     if which "$QUICKVM_VIEWER_APP"; then
-        if quickvm_ensure_running "$1"; then
-            "$QUICKVM_VIEWER_APP" -a -c "$QUICKVM_LIBVIRT_URL" "$1"
-            return $?
-        else
-            quickvm_log_error "failed to start vm '$1'"
-            return 1
+        if ! quickvm_ensure_running "$1"; then
+            quickvm_log_warn "vm '$1' might not be up"
         fi
+
+        "$QUICKVM_VIEWER_APP" -a -c "$QUICKVM_LIBVIRT_URL" "$1"
+        return $?
     else
         quickvm_log_error "virt-viewer isn't installed"
         return 1
