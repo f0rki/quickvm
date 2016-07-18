@@ -95,7 +95,22 @@ function __was_created_by_quickvm() {
     __quickvm_get_desc "$1" | grep -i 'quickvm' > /dev/null
 }
 
-function __quickvm_get_ipaddr() {
+function __quickvm_get_ipaddr_fileread() {
+    # dirty workaround because virsh domifaddr doesn't work with qemu:///session
+    local ipaddr
+    ipaddr=$(cat /var/lib/libvirt/dnsmasq/virbr0.status \
+        | jq ".[] | select(.hostname == \"pwn\") | .[\"ip-address\"]" \
+        | head -n 1 | head -c -2 | tail -c +2)
+    if [[ $? -eq 0 && "$ipaddr" != "" ]]; then
+        echo "$ipaddr"
+        return 0
+    else
+        echo ""
+        return 1
+    fi
+}
+
+function __quickvm_get_ipaddr_domifaddr() {
     declare -a netinfo
     local ipaddr
     ipaddr=""
@@ -111,6 +126,14 @@ function __quickvm_get_ipaddr() {
     else
         echo ""
         return 1
+    fi
+}
+
+function __quickvm_get_ipaddr() {
+    if [[ "$QUICKVM_LIBVIRT_URL" == "qemu:///session" ]]; then
+        __quickvm_get_ipaddr_fileread "$@"
+    else
+        __quickvm_get_ipaddr_domifaddr "$@"
     fi
 }
 
