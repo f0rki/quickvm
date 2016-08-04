@@ -28,7 +28,7 @@ QUICKVM_VCPUS="1"
 QUICKVM_MEMORY="1024"
 QUICKVM_USER="$USER"
 declare -i QUICKVM_WAITSTART
-QUICKVM_WAITSTART=5
+QUICKVM_WAITSTART=10
 QUICKVM_TRANSFER_COMMAND="rsync"
 QUICKVM_TRANSFER_ARGS="-r"
 QUICKVM_VIEWER_APP="virt-viewer"
@@ -99,7 +99,7 @@ function __quickvm_get_ipaddr_fileread() {
     # dirty workaround because virsh domifaddr doesn't work with qemu:///session
     local ipaddr
     ipaddr=$(cat /var/lib/libvirt/dnsmasq/virbr0.status \
-        | jq ".[] | select(.hostname == \"pwn\") | .[\"ip-address\"]" \
+        | jq ".[] | select(.hostname == \"$1\") | .[\"ip-address\"]" \
         | head -n 1 | head -c -2 | tail -c +2)
     if [[ $? -eq 0 && "$ipaddr" != "" ]]; then
         echo "$ipaddr"
