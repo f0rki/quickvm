@@ -32,6 +32,7 @@ QUICKVM_WAITSTART=10
 QUICKVM_TRANSFER_COMMAND="rsync"
 QUICKVM_TRANSFER_ARGS="-r"
 QUICKVM_VIEWER_APP="virt-viewer"
+QUICKVM_VMCONFIG_DIR="$QUICKVM_CONFIG_DIR/vm_config/"
 
 
 # help message for the commands
@@ -87,6 +88,10 @@ function __quickvm_sudo() {
     fi
 }
 
+function __quickvm_is_user_session() {
+    [[ "$QUICKVM_LIBVIRT_URL" == "qemu:///session" ]]
+}
+
 function __quickvm_virsh() {
     virsh -q -c "$QUICKVM_LIBVIRT_URL" "$@"
 }
@@ -130,7 +135,7 @@ function __quickvm_get_ipaddr_domifaddr() {
 }
 
 function __quickvm_get_ipaddr() {
-    if [[ "$QUICKVM_LIBVIRT_URL" == "qemu:///session" ]]; then
+    if __quickvm_is_user_session; then
         __quickvm_get_ipaddr_fileread "$@"
     else
         __quickvm_get_ipaddr_domifaddr "$@"
@@ -262,13 +267,48 @@ function __quickvm_get_desc() {
     fi
 }
 
+function __quickvm_get_vmconf() {
+    # args
+    local vm
+    vm="$1"
+    #
+    local vmconf
+    vmconf="$QUICKVM_VMCONFIG_DIR/$vm"
+    if [[ -e "$vmconf" ]]; then
+        cat "$vmconf"
+    else
+        mkdir -p "$QUICKVM_VMCONFIG_DIR"
+        touch "$vmconf"
+        echo ""
+    fi
+}
+
+function __quickvm_set_vmconf() {
+    # args
+    local vm
+    vm="$1"
+    local newconf
+    newconf="$2"
+    #
+    vmconf="$QUICKVM_VMCONFIG_DIR/$vm"
+    mkdir -p "$QUICKVM_VMCONFIG_DIR"
+    echo "quickvm-config{$newconf}" > "$vmconf"
+}
+
 function __quickvm_get_config_string() {
     # args
     local vm
     vm="$1"
     #
     local desc
-    desc=$(__quickvm_get_desc "$vm")
+    desc=""
+
+    if __quickvm_is_user_session; then
+        desc=$(__quickvm_get_vmconf "$vm")
+    else
+        desc=$(__quickvm_get_desc "$vm")
+    fi
+
     if [[ "$desc" == "" ]]; then
         echo ""
     else
@@ -286,15 +326,21 @@ function __quickvm_set_config_string() {
     vm="$1"
     config="$2"
     #
-    desc=$(__quickvm_get_desc "$vm")
-    current=$(__quickvm_get_config_string "$vm")
-    if [[ $? -ne 0 || "$current" == "" ]]; then
-        __quickvm_virsh "desc" "$vm" \
-            $(printf "$desc\nmetadata for quickvm:\nquickvm-config{${config}}\n") >/dev/null
+    local desc
+    local current
+    if __quickvm_is_user_session; then
+        __quickvm_set_vmconf "$vm" "$config"
     else
-        __quickvm_virsh "desc" "$vm" \
-            $(echo "$desc" \
-                | sed "s/quickvm-config{.\+}/quickvm-config{$config}/") >/dev/null
+        desc=$(__quickvm_get_desc "$vm")
+        current=$(__quickvm_get_config_string "$vm")
+        if [[ $? -ne 0 || "$current" == "" ]]; then
+            __quickvm_virsh "desc" "$vm" \
+                $(printf "$desc\nmetadata for quickvm:\nquickvm-config{${config}}\n") >/dev/null
+        else
+            __quickvm_virsh "desc" "$vm" \
+                $(echo "$desc" \
+                    | sed "s/quickvm-config{.\+}/quickvm-config{$config}/") >/dev/null
+        fi
     fi
 }
 
