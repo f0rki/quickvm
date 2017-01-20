@@ -79,6 +79,26 @@ Basically none except for libvirt and things that come with libvirt:
     - wget and execute a shell script
 
 
+### Problems with 9pfs
+
+When using 9pfs you will run into permission problems, because the uids inside
+the guest and the host uids will not match. E.g. it happens that you create a
+file inside the guest, which will be owned by the qemu user. If you used the
+mapped setting in 9pfs, this means you will probably not be able to access this
+from inside the guest.
+
+### Problems with qemu:///session
+
+While the 9pfs problems would be solved if you'd use the user session, which
+starts the VMs as your local user, you will face other problems. See this
+vagrant-libvirt bug for some of the issues:
+https://github.com/vagrant-libvirt/vagrant-libvirt/issues/272
+
+The most impacting thing is that `virsh domifaddr` won't work anymore.
+`quickvm` works around this be by directly parsing the file
+`/var/lib/libvirt/dnsmasq/virbr0.status`.
+
+
 ## Comparison with other tools
 
 Warning: some ranting ahead.
