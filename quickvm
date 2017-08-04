@@ -157,6 +157,25 @@ function __quickvm_timeout() {
     )
 }
 
+function quickvm_create_default_config() {
+    mkdir -p "$QUICKVM_CONFIG_DIR"
+    touch "$QUICKVM_CONFIG_FILE"
+    cat > "$QUICKVM_CONFIG_FILE" <<EOF
+# Add your custom config here
+#QUICKVM_LIBVIRT_URL="qemu:///system"
+#QUICKVM_SIZE="20G"
+#QUICKVM_STORAGE_POOL="default"
+#QUICKVM_VCPUS="1"
+#QUICKVM_MEMORY="1024"
+#QUICKVM_USER="\$USER"
+#QUICKVM_WAITSTART=10
+#QUICKVM_TRANSFER_COMMAND="rsync"
+#QUICKVM_TRANSFER_ARGS="-r"
+#QUICKVM_VIEWER_APP="virt-viewer"
+#QUICKVM_VMCONFIG_DIR="\$QUICKVM_CONFIG_DIR/vm_config/"
+EOF
+}
+
 function quickvm_read_config() {
     # get default vcpu count based on the number of available CPU cores on the
     # host node
@@ -167,6 +186,8 @@ function quickvm_read_config() {
 
     if [[ -f "$QUICKVM_CONFIG_FILE" ]]; then
         source "$QUICKVM_CONFIG_FILE"
+    else
+        quickvm_create_default_config
     fi
 }
 
